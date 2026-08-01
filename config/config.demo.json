@@ -5,7 +5,7 @@
   "tradable_balance_ratio": 0.99,
   "fiat_display_currency": "USD",
   "timeframe": "5m",
-  "dry_run": false,
+  "dry_run": true,
   "dry_run_wallet": 1000,
   "cancel_open_orders_on_exit": true,
   "trading_mode": "futures",
@@ -28,32 +28,6 @@
   },
   "exchange": {
     "name": "binance",
-    "ccxt_config": {
-      "urls": {
-        "api": {
-          "fapiPublic": "https://demo-fapi.binance.com/fapi/v1",
-          "fapiPublicV2": "https://demo-fapi.binance.com/fapi/v2",
-          "fapiPublicV3": "https://demo-fapi.binance.com/fapi/v3",
-          "fapiPrivate": "https://demo-fapi.binance.com/fapi/v1",
-          "fapiPrivateV2": "https://demo-fapi.binance.com/fapi/v2",
-          "fapiPrivateV3": "https://demo-fapi.binance.com/fapi/v3",
-          "fapiData": "https://demo-fapi.binance.com/futures/data"
-        }
-      }
-    },
-    "ccxt_async_config": {
-      "urls": {
-        "api": {
-          "fapiPublic": "https://demo-fapi.binance.com/fapi/v1",
-          "fapiPublicV2": "https://demo-fapi.binance.com/fapi/v2",
-          "fapiPublicV3": "https://demo-fapi.binance.com/fapi/v3",
-          "fapiPrivate": "https://demo-fapi.binance.com/fapi/v1",
-          "fapiPrivateV2": "https://demo-fapi.binance.com/fapi/v2",
-          "fapiPrivateV3": "https://demo-fapi.binance.com/fapi/v3",
-          "fapiData": "https://demo-fapi.binance.com/futures/data"
-        }
-      }
-    },
     "pair_whitelist": [
       "BTC/USDT:USDT",
       "ETH/USDT:USDT",
