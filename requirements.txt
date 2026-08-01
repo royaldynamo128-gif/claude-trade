@@ -1,0 +1,3 @@
+# Freqtrade — pinned to stable release.
+# Install: uv pip install -r requirements.txt
+freqtrade>=2024.12
