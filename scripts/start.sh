@@ -15,9 +15,17 @@ ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$ROOT/venv/bin/activate"
 
 MODE="${MODE:-demo}"
-STRATEGY="${STRATEGY:-CTSampleStrategy}"
+STRATEGY="${STRATEGY:-CTFuturesTrendStrategy}"
 CONFIG="$ROOT/config/config.${MODE}.json"
-SECRETS="$ROOT/config/secrets.${MODE}.json"
+if [ "$MODE" = "demo" ]; then
+    if [ -f "$ROOT/config/secrets.json" ]; then
+        SECRETS="$ROOT/config/secrets.json"
+    else
+        SECRETS="$ROOT/config/secrets.demo.json"
+    fi
+else
+    SECRETS="$ROOT/config/secrets.live.json"
+fi
 
 if [ ! -f "$CONFIG" ]; then
     echo "ERROR: Config not found: $CONFIG"
@@ -28,17 +36,6 @@ if [ ! -f "$SECRETS" ]; then
     echo "ERROR: Secrets not found: $SECRETS"
     echo "  Copy config/secrets.json.example → config/secrets.json and fill in values."
     exit 1
-fi
-
-# For demo mode, secrets.demo.json doesn't exist — use secrets.json
-if [ "$MODE" = "demo" ] && [ ! -f "$SECRETS" ]; then
-    SECRETS="$ROOT/config/secrets.json"
-fi
-# Resolve: demo uses secrets.json, live uses secrets.live.json
-if [ "$MODE" = "demo" ]; then
-    SECRETS="$ROOT/config/secrets.json"
-else
-    SECRETS="$ROOT/config/secrets.live.json"
 fi
 
 echo "======================================"

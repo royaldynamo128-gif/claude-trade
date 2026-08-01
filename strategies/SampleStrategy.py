@@ -60,7 +60,10 @@ class CTSampleStrategy(IStrategy):
     INTERFACE_VERSION = 3
 
     # Can this strategy go short?
-    can_short: bool = False
+    can_short: bool = True
+
+    # Default leverage multiplier (e.g. 5.0x, 10.0x, 20.0x)
+    leverage_num: float = 5.0
 
     # Minimal ROI designed for the strategy.
     # This attribute will be overridden if the config file contains "minimal_roi".
@@ -129,6 +132,22 @@ class CTSampleStrategy(IStrategy):
             },
         },
     }
+
+    def leverage(
+        self,
+        pair: str,
+        current_time: datetime,
+        current_rate: float,
+        proposed_leverage: float,
+        max_leverage: float,
+        entry_tag: Optional[str],
+        side: str,
+        **kwargs,
+    ) -> float:
+        """
+        Customize leverage for each trade, respecting maximum leverage on exchange for the pair.
+        """
+        return min(self.leverage_num, max_leverage)
 
     def informative_pairs(self):
         """
