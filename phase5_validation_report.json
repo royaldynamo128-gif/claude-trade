@@ -1,17 +1,17 @@
 {
-  "timestamp": "2026-08-02T13:51:43.589332+00:00",
-  "total_trades": 11,
+  "timestamp": "2026-08-02T15:42:16.002843+00:00",
+  "total_trades": 2,
   "summary": {
-    "pass": 0,
+    "pass": 1,
     "warn": 1,
-    "fail": 7,
+    "fail": 6,
     "overall": "FAIL"
   },
   "kpi_results": {
     "L7-K1": {
-      "value": 0.3181818181818182,
-      "status": "\u274c FAIL",
-      "reason": "ECE 0.3182 >= 0.10"
+      "value": 0.0,
+      "status": "\u2705 PASS",
+      "reason": "ECE 0.0000 < 0.08"
     },
     "L7-K2": {
       "value": 0.25,
@@ -75,7 +75,7 @@
       0.0,
       0.0,
       0.0,
-      0.18181818181818182,
+      0.5,
       0.0,
       0.0,
       0.0,
@@ -87,15 +87,15 @@
       0,
       0,
       0,
-      11,
+      2,
       0,
       0,
       0,
       0
     ],
-    "ece": 0.3181818181818182,
+    "ece": 0.0,
     "brier": 0.25,
-    "max_deviation": 0.3181818181818182
+    "max_deviation": 0.0
   },
   "quartile_analysis": {
     "Q1_wr": 0,

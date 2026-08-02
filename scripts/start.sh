@@ -60,5 +60,6 @@ freqtrade trade \
     --config "$SECRETS" \
     --strategy "$STRATEGY" \
     --strategy-path "$ROOT/strategies" \
+    --freqaimodel LightGBMRegressor \
     --userdir "$ROOT/user_data" \
     --logfile "$ROOT/user_data/logs/freqtrade.log"

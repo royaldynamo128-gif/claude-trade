@@ -18,6 +18,7 @@ __pycache__/
 *.sqlite*
 user_data/data/
 user_data/logs/
+user_data/models/
 user_data/tradesv3.sqlite
 user_data/backtest_results/
 user_data/hyperopt_results/

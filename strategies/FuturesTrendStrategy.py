@@ -664,12 +664,12 @@ class CTFuturesTrendStrategy(IStrategy):
         # -----------------------------------------------------------------
         # 1. Get raw ML prediction (regression target &-target)
         if "&-target" in dataframe.columns:
-            ml_target = dataframe["&-target"].fillna(0.0)
-            # Convert regression z-score to pseudo-probability via sigmoid-like mapping
-            # Positive z = bullish, negative z = bearish
-            raw_prob_long = 1.0 / (1.0 + np.exp(-2.0 * ml_target.clip(-3, 3)))
+            ml_target = pd.Series(dataframe["&-target"], index=dataframe.index).fillna(0.0).astype(float)
+            raw_prob_long = pd.Series(
+                1.0 / (1.0 + np.exp(-2.0 * ml_target.clip(-3.0, 3.0).values)),
+                index=dataframe.index,
+            )
             raw_prob_short = 1.0 - raw_prob_long
-            # ML direction: any positive target = long, any negative = short
             ml_long_dir = ml_target > 0.0
             ml_short_dir = ml_target < 0.0
         else:
@@ -777,27 +777,15 @@ class CTFuturesTrendStrategy(IStrategy):
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """TA rules + 7-gate TradeFilter."""
-        # TA rule conditions
+        # TA rule conditions (trend level filters)
         ta_long = (
-            (dataframe["close"] > dataframe["ema200"])
-            & (dataframe["ema50"] > dataframe["ema200"])
-            & (
-                (qtpylib.crossed_above(dataframe["rsi"], 40))
-                | (qtpylib.crossed_above(dataframe["close"], dataframe["bb_upperband"]))
-            )
-            & (dataframe["adx"] > 18)
-            & (dataframe["volume"] > dataframe["volume_mean_20"])
+            ((dataframe["close"] > dataframe["ema50"]) | (dataframe["ema50"] > dataframe["ema200"]))
+            & (dataframe["rsi"] > 35)
         )
 
         ta_short = (
-            (dataframe["close"] < dataframe["ema200"])
-            & (dataframe["ema50"] < dataframe["ema200"])
-            & (
-                (qtpylib.crossed_below(dataframe["rsi"], 60))
-                | (qtpylib.crossed_below(dataframe["close"], dataframe["bb_lowerband"]))
-            )
-            & (dataframe["adx"] > 18)
-            & (dataframe["volume"] > dataframe["volume_mean_20"])
+            ((dataframe["close"] < dataframe["ema50"]) | (dataframe["ema50"] < dataframe["ema200"]))
+            & (dataframe["rsi"] < 65)
         )
 
         # ML + TradeFilter gates (vectorized)
@@ -832,7 +820,6 @@ class CTFuturesTrendStrategy(IStrategy):
         width_short_ok = dataframe["confidence_width_short"] <= 0.40
 
         # EV gate (G4) — uses lower-bound EV
-        # For cold-start, lower the EV minimum to $0.05 to allow initial trades
         ev_min = 0.05 if not is_calibrated else 0.20
         ev_long_ok = dataframe["ev_long"] >= ev_min
         ev_short_ok = dataframe["ev_short"] >= ev_min
@@ -852,6 +839,7 @@ class CTFuturesTrendStrategy(IStrategy):
 
         # Debug: log signal counts (only on last candle of each pair)
         if len(dataframe) > 0:
+            last_i = dataframe.index[-1]
             n_ta_long = int(ta_long.sum())
             n_ta_short = int(ta_short.sum())
             n_ml_long = int(ml_long.sum())
@@ -864,6 +852,21 @@ class CTFuturesTrendStrategy(IStrategy):
                 "calibrated=%s thresh=%.2f ev_min=%.3f",
                 metadata_pair, n_ta_long, n_ta_short, n_ml_long, n_ml_short,
                 n_enter_long, n_enter_short, is_calibrated, effective_threshold, ev_min,
+            )
+            logger.info(
+                "[GateCheck] %s | pred=%s di=%s dirL=%s confL=%s(%.3f) widthL=%s(%.3f) evL=%s(%.3f) regime=%s(%s)",
+                metadata_pair,
+                bool(do_predict_ok.loc[last_i]),
+                bool(di_ok.loc[last_i]),
+                bool(ml_long_dir.loc[last_i]),
+                bool(conf_long_ok.loc[last_i]),
+                float(dataframe.loc[last_i, "calibrated_long_prob"]),
+                bool(width_long_ok.loc[last_i]),
+                float(dataframe.loc[last_i, "confidence_width_long"]),
+                bool(ev_long_ok.loc[last_i]),
+                float(dataframe.loc[last_i, "ev_long"]),
+                bool(regime_ok.loc[last_i]),
+                str(dataframe.loc[last_i, "regime"]),
             )
 
         dataframe.loc[ta_long & ml_long, "enter_long"] = 1

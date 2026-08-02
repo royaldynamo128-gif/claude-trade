@@ -77,9 +77,21 @@ def load_backtest_result(path: Path) -> pd.DataFrame:
     with open(path, "r") as f:
         data = json.load(f)
 
-    # Freqtrade backtest result format: ['strategy']['<name>']['trades']
-    strategy_name = list(data.get("strategy", {}).keys())[0]
-    trades = data["strategy"][strategy_name]["trades"]
+    # Freqtrade backtest result format: ['strategy']['<name>']['trades'] or ['<name>']['trades']
+    if isinstance(data.get("strategy"), dict):
+        strategy_name = list(data["strategy"].keys())[0]
+        trades = data["strategy"][strategy_name].get("trades", [])
+    elif isinstance(data.get("strategy_name"), str) and data.get("strategy_name") in data:
+        strategy_name = data["strategy_name"]
+        trades = data[strategy_name].get("trades", [])
+    elif "trades" in data:
+        trades = data["trades"]
+    else:
+        trades = []
+        for k, v in data.items():
+            if isinstance(v, dict) and "trades" in v:
+                trades = v["trades"]
+                break
     df = pd.DataFrame(trades)
 
     # Normalize column names
