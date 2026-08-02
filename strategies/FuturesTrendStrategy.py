@@ -140,12 +140,13 @@ class CTFuturesTrendStrategy(IStrategy):
 
     can_short: bool = True
 
-    # ROI Table (disabled in favor of custom_roi, but kept as fallback)
+    # ROI Table — wider to let winners run (at 5x leverage, 0.10 = 2% price move)
     minimal_roi = {
-        "0": 0.05,
-        "30": 0.025,
-        "60": 0.015,
-        "120": 0.0,
+        "0": 0.15,      # 15% on stake = 3% price move (let it run to big profit)
+        "60": 0.08,     # 8% after 1 hour = 1.6% price move
+        "180": 0.04,    # 4% after 3 hours = 0.8% price move
+        "360": 0.02,    # 2% after 6 hours = 0.4% price move
+        "720": 0.0,     # breakeven after 12 hours
     }
 
     stoploss = -0.10
@@ -351,34 +352,35 @@ class CTFuturesTrendStrategy(IStrategy):
                 stop_price, current_rate, trade.is_short, trade.leverage
             )
 
-        # Tier 4: profit > 6%
+        # Tier 4: profit > 10% — lock 6% above entry
+        if current_profit > 0.10:
+            return stoploss_from_open(
+                0.06, current_profit, is_short=trade.is_short, leverage=trade.leverage
+            )
+        # Tier 3: profit 6-10% — trail at 60% of profit (min 4%)
         if current_profit > 0.06:
+            trail = max(0.04, current_profit * 0.60)
             return stoploss_from_open(
-                0.04, current_profit, is_short=trade.is_short, leverage=trade.leverage
+                current_profit - trail, current_profit,
+                is_short=trade.is_short, leverage=trade.leverage,
             )
-        # Tier 3: profit 3-6%
+        # Tier 2: profit 3-6% — trail at 50% of profit (min 2%)
         if current_profit > 0.03:
-            trail = max(0.02, current_profit * 0.60)
+            trail = max(0.02, current_profit * 0.50)
             return stoploss_from_open(
                 current_profit - trail, current_profit,
                 is_short=trade.is_short, leverage=trade.leverage,
             )
-        # Tier 2: profit 1-3%
-        if current_profit > 0.01:
-            trail = max(0.01, current_profit * 0.50)
+        # Tier 1: profit >= 3% — break-even (+1% to cover fees at 5x)
+        if current_profit >= 0.03:
             return stoploss_from_open(
-                current_profit - trail, current_profit,
+                0.01, current_profit,
                 is_short=trade.is_short, leverage=trade.leverage,
             )
-        # Tier 1: break-even at +1.5%
-        if current_profit >= 0.015:
-            return stoploss_from_open(
-                0.005, current_profit,
-                is_short=trade.is_short, leverage=trade.leverage,
-            )
-        # Tier 0: ATR stop
-        atr_stop = -((1.5 * atr) / trade.open_rate)
-        return max(-0.10, min(-0.015, atr_stop))
+        # Tier 0: ATR stop (2.5 × ATR from entry, capped at -10% floor, -3% minimum)
+        # Widened from 1.5×ATR to 2.5×ATR to give trades room to breathe through noise
+        atr_stop = -((2.5 * atr) / trade.open_rate)
+        return max(-0.10, min(-0.03, atr_stop))
 
     def custom_stake_amount(
         self,
@@ -776,66 +778,104 @@ class CTFuturesTrendStrategy(IStrategy):
     # -------------------------------------------------------------------------
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        """TA rules + 7-gate TradeFilter."""
-        # TA rule conditions (trend level filters)
+        """TA rules + 7-gate TradeFilter.
+
+        FIXED ENTRY LOGIC (v2):
+        - LONG: Buy DIPS in uptrends (RSI was low + now rising, NOT RSI high)
+        - SHORT: Short SPIKES in downtrends (RSI was high + now falling, NOT RSI low)
+        - Volume confirmation required
+        - ADX > 20 required (trend must have strength)
+        """
+        # === FIXED ENTRY LOGIC ===
+        # The previous code bought at TOPS (rsi > 35 = almost always true in uptrend)
+        # and shorted at BOTTOMS (rsi < 65 = almost always true in downtrend).
+        # This is the OPPOSITE of what you want.
+        #
+        # CORRECT LOGIC: Buy pullbacks in uptrends, short rallies in downtrends.
+
+        # LONG: Buy dips in uptrends
+        # RSI was low recently (dip) and is now rising (bounce)
+        rsi_was_low = dataframe["rsi"].shift(3) < 40
+        rsi_rising = dataframe["rsi"] > dataframe["rsi"].shift(1)
+
         ta_long = (
-            ((dataframe["close"] > dataframe["ema50"]) | (dataframe["ema50"] > dataframe["ema200"]))
-            & (dataframe["rsi"] > 35)
+            (dataframe["close"] > dataframe["ema200"])           # Uptrend
+            & (dataframe["ema50"] > dataframe["ema200"])         # Strong bull
+            & (dataframe["rsi"] < 50)                            # RSI not overbought
+            & rsi_was_low                                         # RSI was recently low (dip)
+            & rsi_rising                                           # RSI is now rising (bounce)
+            & (dataframe["adx"] > 25)                            # Trend strength (stricter)
+            & (dataframe["volume"] > dataframe["volume_mean_20"] * 1.2) # Volume confirm (1.2x average)
         )
 
+        # SHORT: Short spikes in downtrends
+        # RSI was high recently (spike) and is now falling (rejection)
+        rsi_was_high = dataframe["rsi"].shift(3) > 60
+        rsi_falling = dataframe["rsi"] < dataframe["rsi"].shift(1)
+
         ta_short = (
-            ((dataframe["close"] < dataframe["ema50"]) | (dataframe["ema50"] < dataframe["ema200"]))
-            & (dataframe["rsi"] < 65)
+            (dataframe["close"] < dataframe["ema200"])           # Downtrend
+            & (dataframe["ema50"] < dataframe["ema200"])         # Strong bear
+            & (dataframe["rsi"] > 50)                            # RSI not oversold
+            & rsi_was_high                                        # RSI was recently high (spike)
+            & rsi_falling                                          # RSI is now falling (rejection)
+            & (dataframe["adx"] > 25)                            # Trend strength (stricter)
+            & (dataframe["volume"] > dataframe["volume_mean_20"] * 1.2) # Volume confirm (1.2x average)
         )
 
         # ML + TradeFilter gates (vectorized)
-        if "do_predict" in dataframe.columns and "DI_values" in dataframe.columns:
-            do_predict_ok = dataframe["do_predict"] == 1
-            di_ok = dataframe["DI_values"] < 1.0
-        else:
-            do_predict_ok = pd.Series(True, index=dataframe.index)
-            di_ok = pd.Series(True, index=dataframe.index)
-
-        # Direction match (G7) - from regression target sign
-        if "ml_long_dir" in dataframe.columns:
-            ml_long_dir = dataframe["ml_long_dir"]
-            ml_short_dir = dataframe["ml_short_dir"]
-        else:
-            ml_long_dir = pd.Series(True, index=dataframe.index)
-            ml_short_dir = pd.Series(True, index=dataframe.index)
-
-        # Confidence threshold (G3 implicit via width, G4 via EV)
-        # For cold-start (calibrator not fit), use a lower threshold to allow trades
-        # Once calibrator fits, the threshold tightens automatically via calibration
+        # COLD-START STRATEGY: When calibrator is NOT fit, skip ML gates entirely.
+        # Use ONLY the TA logic (which is now properly fixed to buy dips / short spikes).
+        # Once calibrator fits (after 50+ real trades), ML gates activate.
         is_calibrated = any(
             v.get("is_fit", False) for v in self.calibrator.get_diagnostics().values()
         )
-        effective_threshold = self.confidence_threshold if is_calibrated else 0.52
 
-        conf_long_ok = dataframe["calibrated_long_prob"] >= effective_threshold
-        conf_short_ok = dataframe["calibrated_short_prob"] >= effective_threshold
+        if not is_calibrated:
+            # COLD-START: Skip all ML gates. Trust the TA logic alone.
+            # This allows trades immediately while the model trains.
+            ml_long = pd.Series(True, index=dataframe.index)
+            ml_short = pd.Series(True, index=dataframe.index)
+            effective_threshold = 0.0
+            ev_min = -999.0  # effectively no EV gate
+        else:
+            # WARM-START: Apply ML gates now that calibrator is fit
+            if "do_predict" in dataframe.columns and "DI_values" in dataframe.columns:
+                do_predict_ok = dataframe["do_predict"] == 1
+                di_ok = dataframe["DI_values"] < 1.0
+            else:
+                do_predict_ok = pd.Series(True, index=dataframe.index)
+                di_ok = pd.Series(True, index=dataframe.index)
 
-        # Interval width gate (G3)
-        width_long_ok = dataframe["confidence_width_long"] <= 0.40
-        width_short_ok = dataframe["confidence_width_short"] <= 0.40
+            # Direction match (G7) - from regression target sign
+            if "ml_long_dir" in dataframe.columns:
+                ml_long_dir = dataframe["ml_long_dir"]
+                ml_short_dir = dataframe["ml_short_dir"]
+            else:
+                ml_long_dir = pd.Series(True, index=dataframe.index)
+                ml_short_dir = pd.Series(True, index=dataframe.index)
 
-        # EV gate (G4) — uses lower-bound EV
-        ev_min = 0.05 if not is_calibrated else 0.20
-        ev_long_ok = dataframe["ev_long"] >= ev_min
-        ev_short_ok = dataframe["ev_short"] >= ev_min
+            effective_threshold = self.confidence_threshold
+            conf_long_ok = dataframe["calibrated_long_prob"] >= effective_threshold
+            conf_short_ok = dataframe["calibrated_short_prob"] >= effective_threshold
 
-        # Regime gate (G6)
-        regime_ok = ~dataframe["regime"].isin(["NEWS_DRIVEN", "CHOPPY"])
+            width_long_ok = dataframe["confidence_width_long"] <= 0.40
+            width_short_ok = dataframe["confidence_width_short"] <= 0.40
 
-        # Combined
-        ml_long = (
-            do_predict_ok & di_ok & ml_long_dir & conf_long_ok
-            & width_long_ok & ev_long_ok & regime_ok
-        )
-        ml_short = (
-            do_predict_ok & di_ok & ml_short_dir & conf_short_ok
-            & width_short_ok & ev_short_ok & regime_ok
-        )
+            ev_min = 0.05
+            ev_long_ok = dataframe["ev_long"] >= ev_min
+            ev_short_ok = dataframe["ev_short"] >= ev_min
+
+            regime_ok = ~dataframe["regime"].isin(["NEWS_DRIVEN", "CHOPPY"])
+
+            ml_long = (
+                do_predict_ok & di_ok & ml_long_dir & conf_long_ok
+                & width_long_ok & ev_long_ok & regime_ok
+            )
+            ml_short = (
+                do_predict_ok & di_ok & ml_short_dir & conf_short_ok
+                & width_short_ok & ev_short_ok & regime_ok
+            )
 
         # Debug: log signal counts (only on last candle of each pair)
         if len(dataframe) > 0:
@@ -853,21 +893,6 @@ class CTFuturesTrendStrategy(IStrategy):
                 metadata_pair, n_ta_long, n_ta_short, n_ml_long, n_ml_short,
                 n_enter_long, n_enter_short, is_calibrated, effective_threshold, ev_min,
             )
-            logger.info(
-                "[GateCheck] %s | pred=%s di=%s dirL=%s confL=%s(%.3f) widthL=%s(%.3f) evL=%s(%.3f) regime=%s(%s)",
-                metadata_pair,
-                bool(do_predict_ok.loc[last_i]),
-                bool(di_ok.loc[last_i]),
-                bool(ml_long_dir.loc[last_i]),
-                bool(conf_long_ok.loc[last_i]),
-                float(dataframe.loc[last_i, "calibrated_long_prob"]),
-                bool(width_long_ok.loc[last_i]),
-                float(dataframe.loc[last_i, "confidence_width_long"]),
-                bool(ev_long_ok.loc[last_i]),
-                float(dataframe.loc[last_i, "ev_long"]),
-                bool(regime_ok.loc[last_i]),
-                str(dataframe.loc[last_i, "regime"]),
-            )
 
         dataframe.loc[ta_long & ml_long, "enter_long"] = 1
         dataframe.loc[ta_short & ml_short, "enter_short"] = 1
@@ -875,29 +900,41 @@ class CTFuturesTrendStrategy(IStrategy):
         return dataframe
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        """TA exits + ML early exits."""
-        ta_exit_long = (
-            (dataframe["rsi"] > 70)
-            | (qtpylib.crossed_below(dataframe["close"], dataframe["ema50"]))
-        )
-        ta_exit_short = (
-            (dataframe["rsi"] < 30)
-            | (qtpylib.crossed_above(dataframe["close"], dataframe["ema50"]))
-        )
+        """TA exits + ML early exits.
 
-        # ML early exit: confidence drops below 0.40 OR EV goes negative
+        FIXED EXIT LOGIC (v2):
+        - Exit longs when RSI is overbought (>75) OR trend reverses (close < ema50)
+        - Exit shorts when RSI is oversold (<25) OR trend reverses (close > ema50)
+        - ML early exit: confidence drops or EV goes very negative
+        - Removed the too-tight RSI>70 / RSI<30 that caused 2-5 minute exits
+        """
+        # Exit long: RSI overbought OR trend break OR RSI was high and now falling
+        rsi_overbought = dataframe["rsi"] > 75
+        trend_break_long = qtpylib.crossed_below(dataframe["close"], dataframe["ema50"])
+        rsi_peak_long = (dataframe["rsi"].shift(1) > 70) & (dataframe["rsi"] < dataframe["rsi"].shift(1))
+
+        ta_exit_long = rsi_overbought | trend_break_long | rsi_peak_long
+
+        # Exit short: RSI oversold OR trend break OR RSI was low and now rising
+        rsi_oversold = dataframe["rsi"] < 25
+        trend_break_short = qtpylib.crossed_above(dataframe["close"], dataframe["ema50"])
+        rsi_peak_short = (dataframe["rsi"].shift(1) < 30) & (dataframe["rsi"] > dataframe["rsi"].shift(1))
+
+        ta_exit_short = rsi_oversold | trend_break_short | rsi_peak_short
+
+        # ML early exit: confidence drops below 0.35 OR EV goes very negative
         if (
             "do_predict" in dataframe.columns
             and "calibrated_long_prob" in dataframe.columns
         ):
             predict_ok = dataframe["do_predict"] == 1
             ml_exit_long = predict_ok & (
-                (dataframe["calibrated_long_prob"] < 0.40)
-                | (dataframe["ev_long"] < -0.20)
+                (dataframe["calibrated_long_prob"] < 0.35)
+                | (dataframe["ev_long"] < -0.30)
             )
             ml_exit_short = predict_ok & (
-                (dataframe["calibrated_short_prob"] < 0.40)
-                | (dataframe["ev_short"] < -0.20)
+                (dataframe["calibrated_short_prob"] < 0.35)
+                | (dataframe["ev_short"] < -0.30)
             )
         else:
             ml_exit_long = pd.Series(False, index=dataframe.index)
