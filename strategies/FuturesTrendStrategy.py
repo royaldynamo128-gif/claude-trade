@@ -63,6 +63,43 @@ class CTFuturesTrendStrategy(IStrategy):
     # Configurable leverage setting
     leverage_num: float = 5.0
 
+    @property
+    def protections(self):
+        return [
+            {"method": "CooldownPeriod", "stop_duration_candles": 2},
+            {
+                "method": "StoplossGuard",
+                "lookback_period_candles": 24,
+                "trade_limit": 4,
+                "stop_duration_candles": 4,
+                "only_per_side": True,
+            },
+            {
+                "method": "MaxDrawdown",
+                "lookback_period_candles": 288,
+                "trade_limit": 4,
+                "stop_duration_candles": 144,
+                "max_allowed_drawdown": 0.05,
+                "calculation_mode": "equity",
+                "only_per_side": True,
+            },
+            {
+                "method": "MaxDrawdown",
+                "lookback_period_candles": 2016,
+                "trade_limit": 15,
+                "stop_duration_candles": 576,
+                "max_allowed_drawdown": 0.10,
+                "calculation_mode": "equity",
+            },
+            {
+                "method": "LowProfitPairs",
+                "lookback_period_candles": 2016,
+                "trade_limit": 5,
+                "stop_duration_candles": 288,
+                "required_profit": 0.0,
+            },
+        ]
+
     # Order types configuration
     order_types = {
         "entry": "limit",
