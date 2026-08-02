@@ -25,10 +25,10 @@ logger = logging.getLogger(__name__)
 
 class CTFuturesTrendStrategy(IStrategy):
     """
-    ClaudeTrade Futures Trend-Following & Breakdown Strategy with Full Risk Stack
+    ClaudeTrade Futures Trend-Following & Breakdown Strategy with FreqAI Integration & Risk Stack
     
     Features:
-    - 200 EMA Trend Filter (Long above 200 EMA, Short below 200 EMA)
+    - 200 EMA Trend Filter & LightGBM Multi-Class Regression/Confidence Gate
     - Dynamic Inverse ATR Percentile & Regime Leverage (1x - 5x)
     - Multi-Tier ATR Stop Loss with Break-even & Stepped Trailing
     - ATR-Scaled Fixed Fractional Position Sizing (1% risk per trade)
@@ -294,10 +294,112 @@ class CTFuturesTrendStrategy(IStrategy):
 
         return True
 
+    # -------------------------------------------------------------------------
+    # FreqAI Feature Engineering Callbacks
+    # -------------------------------------------------------------------------
+
+    def feature_engineering_expand_all(
+        self, dataframe: DataFrame, period: int, metadata: dict, **kwargs
+    ) -> DataFrame:
+        """
+        Features expanded across all include_timeframes and shifted_candles.
+        Must use prefix %- for FreqAI feature column names.
+        """
+        dataframe["%-rsi"] = ta.RSI(dataframe, timeperiod=14)
+        dataframe["%-mfi"] = ta.MFI(dataframe, timeperiod=14)
+        dataframe["%-adx"] = ta.ADX(dataframe, timeperiod=14)
+
+        ema50 = ta.EMA(dataframe, timeperiod=50)
+        ema200 = ta.EMA(dataframe, timeperiod=200)
+        dataframe["%-ema_slope_50"] = ema50.pct_change(3).fillna(0)
+        dataframe["%-ema_slope_200"] = ema200.pct_change(5).fillna(0)
+
+        macd = ta.MACD(dataframe)
+        dataframe["%-macd_hist"] = macd["macdhist"].fillna(0)
+
+        bollinger = qtpylib.bollinger_bands(qtpylib.typical_price(dataframe), window=20, stds=2)
+        dataframe["%-bb_width"] = ((bollinger["upper"] - bollinger["lower"]) / (bollinger["mid"] + 1e-8)).fillna(0)
+        dataframe["%-close_vs_bb_lower"] = (
+            (dataframe["close"] - bollinger["lower"]) / (bollinger["upper"] - bollinger["lower"] + 1e-8)
+        ).fillna(0)
+
+        dataframe["%-atr_pct"] = (ta.ATR(dataframe, timeperiod=14) / (dataframe["close"] + 1e-8)).fillna(0)
+
+        vol_mean = dataframe["volume"].rolling(20).mean()
+        dataframe["%-rvol"] = (dataframe["volume"] / (vol_mean + 1e-8)).fillna(0)
+        dataframe["%-roc"] = ta.ROC(dataframe, timeperiod=10).fillna(0)
+
+        return dataframe
+
+    def feature_engineering_expand_basic(
+        self, dataframe: DataFrame, metadata: dict, **kwargs
+    ) -> DataFrame:
+        """
+        Basic expanded features.
+        """
+        atr = ta.ATR(dataframe, timeperiod=10)
+        hl2 = (dataframe["high"] + dataframe["low"]) / 2
+        dataframe["%-supertrend_proxy"] = ((dataframe["close"] - hl2) / (atr + 1e-8)).fillna(0)
+
+        mfv = (
+            ((dataframe["close"] - dataframe["low"]) - (dataframe["high"] - dataframe["close"]))
+            / (dataframe["high"] - dataframe["low"] + 1e-8)
+            * dataframe["volume"]
+        )
+        dataframe["%-cmf"] = (mfv.rolling(20).sum() / (dataframe["volume"].rolling(20).sum() + 1e-8)).fillna(0)
+
+        return dataframe
+
+    def feature_engineering_standard(
+        self, dataframe: DataFrame, metadata: dict, **kwargs
+    ) -> DataFrame:
+        """
+        Non-expanded standard features.
+        """
+        dataframe["%-day_of_week"] = dataframe["date"].dt.dayofweek
+        dataframe["%-hour_of_day"] = dataframe["date"].dt.hour
+
+        vwap = (
+            dataframe["volume"] * (dataframe["high"] + dataframe["low"] + dataframe["close"]) / 3
+        ).cumsum() / (dataframe["volume"].cumsum() + 1e-8)
+        dataframe["%-vwap_dist"] = ((dataframe["close"] - vwap) / (vwap + 1e-8)).fillna(0)
+
+        atr_pct = ta.ATR(dataframe, timeperiod=14) / (dataframe["close"] + 1e-8)
+        dataframe["%-atr_percentile_100"] = atr_pct.rolling(100, min_periods=10).rank(pct=True).fillna(0.5)
+
+        return dataframe
+
+    def set_freqai_targets(
+        self, dataframe: DataFrame, metadata: dict, **kwargs
+    ) -> DataFrame:
+        """
+        Continuous Target definition: &-target (forward 24-candle ROI z-score).
+        Calculates forward 24-candle ROI z-score relative to rolling standard deviation.
+        """
+        label_period = self.freqai_info["feature_parameters"]["label_period_candles"]
+
+        future_close = dataframe["close"].shift(-label_period)
+        forward_roi = (future_close - dataframe["close"]) / (dataframe["close"] + 1e-8)
+
+        roi_std = forward_roi.rolling(100, min_periods=20).std()
+        roi_std = roi_std.replace(0, np.nan).bfill().fillna(0.01)
+        z_score = (forward_roi / roi_std).fillna(0.0)
+
+        dataframe["&-target"] = z_score
+
+        return dataframe
+
+    # -------------------------------------------------------------------------
+    # TA Indicators & Signal Population
+    # -------------------------------------------------------------------------
+
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
-        Populate TA indicators for Trend-Following and Breakdown strategy.
+        Populate TA indicators and run FreqAI feature pipeline.
         """
+        # Run FreqAI feature engineering pipeline
+        dataframe = self.freqai.start(dataframe, metadata, self)
+
         # Trend Indicators (EMAs)
         dataframe["ema50"] = ta.EMA(dataframe, timeperiod=50)
         dataframe["ema200"] = ta.EMA(dataframe, timeperiod=200)
@@ -320,56 +422,68 @@ class CTFuturesTrendStrategy(IStrategy):
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
-        Populates Long and Short entry signals based on 200 EMA trend filtering.
+        Populates Long and Short entry signals based on TA + FreqAI regression gate.
         """
-        dataframe.loc[
-            (
-                (dataframe["close"] > dataframe["ema200"])
-                & (dataframe["ema50"] > dataframe["ema200"])
-                & (
-                    (qtpylib.crossed_above(dataframe["rsi"], 40))
-                    | (qtpylib.crossed_above(dataframe["close"], dataframe["bb_upperband"]))
-                )
-                & (dataframe["adx"] > 18)
-                & (dataframe["volume"] > dataframe["volume_mean_20"])
-            ),
-            "enter_long",
-        ] = 1
+        # TA Rule Entry Conditions
+        ta_long = (
+            (dataframe["close"] > dataframe["ema200"])
+            & (dataframe["ema50"] > dataframe["ema200"])
+            & (
+                (qtpylib.crossed_above(dataframe["rsi"], 40))
+                | (qtpylib.crossed_above(dataframe["close"], dataframe["bb_upperband"]))
+            )
+            & (dataframe["adx"] > 18)
+            & (dataframe["volume"] > dataframe["volume_mean_20"])
+        )
 
-        dataframe.loc[
-            (
-                (dataframe["close"] < dataframe["ema200"])
-                & (dataframe["ema50"] < dataframe["ema200"])
-                & (
-                    (qtpylib.crossed_below(dataframe["rsi"], 60))
-                    | (qtpylib.crossed_below(dataframe["close"], dataframe["bb_lowerband"]))
-                )
-                & (dataframe["adx"] > 18)
-                & (dataframe["volume"] > dataframe["volume_mean_20"])
-            ),
-            "enter_short",
-        ] = 1
+        ta_short = (
+            (dataframe["close"] < dataframe["ema200"])
+            & (dataframe["ema50"] < dataframe["ema200"])
+            & (
+                (qtpylib.crossed_below(dataframe["rsi"], 60))
+                | (qtpylib.crossed_below(dataframe["close"], dataframe["bb_lowerband"]))
+            )
+            & (dataframe["adx"] > 18)
+            & (dataframe["volume"] > dataframe["volume_mean_20"])
+        )
+
+        # FreqAI ML Regression Gate
+        if "do_predict" in dataframe.columns and "DI_values" in dataframe.columns and "&-target" in dataframe.columns:
+            predict_ok = (dataframe["do_predict"] == 1) & (dataframe["DI_values"] < 1.0)
+            ml_long = predict_ok & (dataframe["&-target"] > 0.3)
+            ml_short = predict_ok & (dataframe["&-target"] < -0.3)
+        else:
+            ml_long = True
+            ml_short = True
+
+        dataframe.loc[ta_long & ml_long, "enter_long"] = 1
+        dataframe.loc[ta_short & ml_short, "enter_short"] = 1
 
         return dataframe
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
-        Populates exit signals for Long and Short positions.
+        Populates exit signals for Long and Short positions based on TA and FreqAI early exits.
         """
-        dataframe.loc[
-            (
-                (dataframe["rsi"] > 70)
-                | (qtpylib.crossed_below(dataframe["close"], dataframe["ema50"]))
-            ),
-            "exit_long",
-        ] = 1
+        ta_exit_long = (
+            (dataframe["rsi"] > 70)
+            | (qtpylib.crossed_below(dataframe["close"], dataframe["ema50"]))
+        )
 
-        dataframe.loc[
-            (
-                (dataframe["rsi"] < 30)
-                | (qtpylib.crossed_above(dataframe["close"], dataframe["ema50"]))
-            ),
-            "exit_short",
-        ] = 1
+        ta_exit_short = (
+            (dataframe["rsi"] < 30)
+            | (qtpylib.crossed_above(dataframe["close"], dataframe["ema50"]))
+        )
+
+        if "do_predict" in dataframe.columns and "&-target" in dataframe.columns:
+            predict_ok = dataframe["do_predict"] == 1
+            ml_exit_long = predict_ok & (dataframe["&-target"] < -0.5)
+            ml_exit_short = predict_ok & (dataframe["&-target"] > 0.5)
+        else:
+            ml_exit_long = False
+            ml_exit_short = False
+
+        dataframe.loc[ta_exit_long | ml_exit_long, "exit_long"] = 1
+        dataframe.loc[ta_exit_short | ml_exit_short, "exit_short"] = 1
 
         return dataframe

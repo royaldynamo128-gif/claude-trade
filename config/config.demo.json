@@ -33,12 +33,60 @@
   },
   "exchange": {
     "name": "binance",
+    "key": "",
+    "secret": "",
+    "ccxt_config": {
+      "options": {
+        "defaultType": "swap"
+      }
+    },
+    "ccxt_async_config": {},
     "pair_whitelist": [
       ".*/USDT:USDT"
     ],
     "pair_blacklist": [
       "(USDC|BUSD|TUSD|EUR|GBP)/USDT:USDT"
     ]
+  },
+  "freqai": {
+    "enabled": true,
+    "purge_old_models": true,
+    "train_period_days": 15,
+    "backtest_period_days": 5,
+    "live_retrain_hours": 0,
+    "expiration_hours": 24,
+    "identifier": "ct-futures-lgbm",
+    "feature_parameters": {
+      "include_timeframes": ["5m", "15m", "1h"],
+      "include_corr_pairlist": ["BTC/USDT:USDT", "ETH/USDT:USDT"],
+      "label_period_candles": 24,
+      "indicator_periods_candles": [10, 20],
+      "include_shifted_candles": 2,
+      "indicator_max_period_candles": 200,
+      "weight_factor": 0.9,
+      "principal_component_analysis": false,
+      "use_svm_to_remove_outliers": false,
+      "DI_threshold": 1.0,
+      "drop_outer_outliers": false
+    },
+    "data_kitchen": {
+      "label_period_candles": 24
+    },
+    "data_split_parameters": {
+      "test_size": 0.25,
+      "random_state": 42,
+      "shuffle": false
+    },
+    "model_training_parameters": {
+      "n_estimators": 300,
+      "learning_rate": 0.03,
+      "max_depth": 6,
+      "num_leaves": 31,
+      "subsample": 0.8,
+      "colsample_bytree": 0.8,
+      "min_child_samples": 20,
+      "random_state": 42
+    }
   },
   "leverage": 5.0,
   "pairlists": [
