@@ -1,7 +1,9 @@
 # Secrets — NEVER commit
 .secrets
 config/secrets.json
-config/secrets.live.json
+config/secrets.*.json
+*.env
+!.env.example
 
 # Python environment
 venv/
@@ -15,17 +17,19 @@ __pycache__/
 .mypy_cache/
 
 # Freqtrade runtime data
+.dry_run_lock
+tradesv3.sqlite
+tradesv3.sqlite-shm
+tradesv3.sqlite-wal
 *.sqlite*
-user_data/data/
 user_data/logs/
 user_data/models/
 user_data/tradesv3.sqlite
+user_data/tradesv3.sqlite-shm
+user_data/tradesv3.sqlite-wal
 user_data/backtest_results/
 user_data/hyperopt_results/
 user_data/plot/
-user_data/notebooks/
-user_data/strategies/
-user_data/hyperopts/
 
 # OS
 .DS_Store
