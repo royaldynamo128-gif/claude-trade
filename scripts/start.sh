@@ -38,13 +38,21 @@ if [ ! -f "$SECRETS" ]; then
     exit 1
 fi
 
+UI_PORT="8088"
+[ "$MODE" = "live" ] && UI_PORT="8080"
+
+UI_USER="freqtrade"
+if [ -f "$SECRETS" ]; then
+    SERVED_USER=$(python3 -c "import json; data=json.load(open('$SECRETS')); print(data.get('api_server', {}).get('username', ''))" 2>/dev/null || true)
+    [ -n "$SERVED_USER" ] && UI_USER="$SERVED_USER"
+fi
+
 echo "======================================"
 echo "  ClaudeTrade starting"
 echo "  Mode:     $MODE"
 echo "  Strategy: $STRATEGY"
-echo "  Web UI:   http://localhost:8088"
-echo "  User:     freqtrade"
-echo "  Pass:     freqtrade123"
+echo "  Web UI:   http://localhost:${UI_PORT}"
+echo "  User:     ${UI_USER}"
 echo "======================================"
 
 freqtrade trade \
