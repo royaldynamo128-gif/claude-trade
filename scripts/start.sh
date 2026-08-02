@@ -42,8 +42,9 @@ echo "======================================"
 echo "  ClaudeTrade starting"
 echo "  Mode:     $MODE"
 echo "  Strategy: $STRATEGY"
-echo "  Web UI:   http://localhost:8080"
-echo "  User:     admin"
+echo "  Web UI:   http://localhost:8088"
+echo "  User:     freqtrade"
+echo "  Pass:     freqtrade123"
 echo "======================================"
 
 freqtrade trade \
