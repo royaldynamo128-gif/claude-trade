@@ -25,7 +25,7 @@ case "${1:-help}" in
         sleep 2
         systemctl --user status "$SERVICE" --no-pager
         echo ""
-        echo "Web UI: http://localhost:8080"
+        echo "Web UI: http://localhost:8088"
         ;;
     stop)
         echo "Stopping $SERVICE..."
