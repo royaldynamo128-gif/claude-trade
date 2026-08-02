@@ -20,15 +20,41 @@ from freqtrade.strategy import (
 import talib.abstract as ta
 from technical import qtpylib
 
+try:
+    from confidence_engine import (
+        MultiSignalConfidenceCombiner,
+        IsotonicCalibrator,
+        ConfidenceIntervalCalculator,
+        EVComputer,
+    )
+except ImportError:
+    try:
+        from strategies.confidence_engine import (
+            MultiSignalConfidenceCombiner,
+            IsotonicCalibrator,
+            ConfidenceIntervalCalculator,
+            EVComputer,
+        )
+    except ImportError:
+        from user_data.strategies.confidence_engine import (
+            MultiSignalConfidenceCombiner,
+            IsotonicCalibrator,
+            ConfidenceIntervalCalculator,
+            EVComputer,
+        )
+
 logger = logging.getLogger(__name__)
 
 
 class CTFuturesTrendStrategy(IStrategy):
     """
-    ClaudeTrade Futures Trend-Following & Breakdown Strategy with FreqAI Integration & Risk Stack
+    ClaudeTrade Futures Trend-Following & Breakdown Strategy with FreqAI Integration, Risk Stack,
+    and Calibrated Confidence Engine Stack.
     
     Features:
-    - 200 EMA Trend Filter & LightGBM Multi-Class Regression/Confidence Gate
+    - 200 EMA Trend Filter & LightGBM Multi-Class Regression
+    - Confidence Calibration Stack (MultiSignalCombiner, IsotonicCalibrator, Wilson Bounds, EV Computer)
+    - EV-Gated Entries (EV > 0.002, Calibrated Prob > 0.55)
     - Dynamic Inverse ATR Percentile & Regime Leverage (1x - 5x)
     - Multi-Tier ATR Stop Loss with Break-even & Stepped Trailing
     - ATR-Scaled Fixed Fractional Position Sizing (1% risk per trade)
@@ -66,6 +92,12 @@ class CTFuturesTrendStrategy(IStrategy):
 
     # Configurable leverage ceiling
     leverage_num: float = 5.0
+
+    def __init__(self, config: dict) -> None:
+        super().__init__(config)
+        self.combiner = MultiSignalConfidenceCombiner()
+        self.calibrator_long = IsotonicCalibrator()
+        self.calibrator_short = IsotonicCalibrator()
 
     @property
     def protections(self):
@@ -395,7 +427,7 @@ class CTFuturesTrendStrategy(IStrategy):
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
-        Populate TA indicators and run FreqAI feature pipeline.
+        Populate TA indicators, run FreqAI feature pipeline, and compute Calibrated Confidence Stack.
         """
         # Run FreqAI feature engineering pipeline
         dataframe = self.freqai.start(dataframe, metadata, self)
@@ -418,11 +450,41 @@ class CTFuturesTrendStrategy(IStrategy):
         dataframe["atr"] = ta.ATR(dataframe, timeperiod=14)
         dataframe["volume_mean_20"] = dataframe["volume"].rolling(20).mean()
 
+        # ---------------------------------------------------------------------
+        # Confidence Engine Calibration Stack Computation
+        # ---------------------------------------------------------------------
+        # 1. Multi-signal combination
+        raw_long_score = self.combiner.combine(dataframe, side="long")
+        raw_short_score = self.combiner.combine(dataframe, side="short")
+
+        # 2. Calibration
+        calibrated_long_prob = self.calibrator_long.calibrate(raw_long_score)
+        calibrated_short_prob = self.calibrator_short.calibrate(raw_short_score)
+
+        dataframe["calibrated_long_prob"] = calibrated_long_prob
+        dataframe["calibrated_short_prob"] = calibrated_short_prob
+
+        # 3. Confidence Bounds (Wilson Score 95%)
+        lower_long, upper_long = ConfidenceIntervalCalculator.compute_bounds(calibrated_long_prob)
+        lower_short, upper_short = ConfidenceIntervalCalculator.compute_bounds(calibrated_short_prob)
+
+        dataframe["confidence_lower_long"] = lower_long
+        dataframe["confidence_upper_long"] = upper_long
+        dataframe["confidence_lower_short"] = lower_short
+        dataframe["confidence_upper_short"] = upper_short
+
+        # 4. Expected Value (EV) calculation
+        ev_long = EVComputer.calculate_ev(calibrated_long_prob, reward_pct=0.03, risk_pct=0.015)
+        ev_short = EVComputer.calculate_ev(calibrated_short_prob, reward_pct=0.03, risk_pct=0.015)
+
+        dataframe["ev_long"] = ev_long
+        dataframe["ev_short"] = ev_short
+
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
-        Populates Long and Short entry signals based on TA + FreqAI regression gate.
+        Populates Long and Short entry signals based on TA + FreqAI ML + Calibrated EV Stack.
         """
         # TA Rule Entry Conditions
         ta_long = (
@@ -447,11 +509,16 @@ class CTFuturesTrendStrategy(IStrategy):
             & (dataframe["volume"] > dataframe["volume_mean_20"])
         )
 
-        # FreqAI ML Regression Gate
-        if "do_predict" in dataframe.columns and "DI_values" in dataframe.columns and "&-target" in dataframe.columns:
+        # FreqAI ML & Calibrated Confidence Engine Entry Gate
+        if "do_predict" in dataframe.columns and "DI_values" in dataframe.columns:
             predict_ok = (dataframe["do_predict"] == 1) & (dataframe["DI_values"] < 1.0)
-            ml_long = predict_ok & (dataframe["&-target"] > 0.3)
-            ml_short = predict_ok & (dataframe["&-target"] < -0.3)
+            
+            # Calibrated Confidence > 0.55 & Positive EV (> 0.002)
+            ev_long_gate = (dataframe["calibrated_long_prob"] > 0.55) & (dataframe["ev_long"] > 0.002)
+            ev_short_gate = (dataframe["calibrated_short_prob"] > 0.55) & (dataframe["ev_short"] > 0.002)
+
+            ml_long = predict_ok & ev_long_gate
+            ml_short = predict_ok & ev_short_gate
         else:
             ml_long = True
             ml_short = True
@@ -463,7 +530,7 @@ class CTFuturesTrendStrategy(IStrategy):
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
-        Populates exit signals for Long and Short positions based on TA and FreqAI early exits.
+        Populates exit signals for Long and Short positions based on TA and Calibrated EV early exits.
         """
         ta_exit_long = (
             (dataframe["rsi"] > 70)
@@ -475,10 +542,10 @@ class CTFuturesTrendStrategy(IStrategy):
             | (qtpylib.crossed_above(dataframe["close"], dataframe["ema50"]))
         )
 
-        if "do_predict" in dataframe.columns and "&-target" in dataframe.columns:
+        if "do_predict" in dataframe.columns and "ev_long" in dataframe.columns:
             predict_ok = dataframe["do_predict"] == 1
-            ml_exit_long = predict_ok & (dataframe["&-target"] < -0.5)
-            ml_exit_short = predict_ok & (dataframe["&-target"] > 0.5)
+            ml_exit_long = predict_ok & ((dataframe["calibrated_long_prob"] < 0.40) | (dataframe["ev_long"] < -0.002))
+            ml_exit_short = predict_ok & ((dataframe["calibrated_short_prob"] < 0.40) | (dataframe["ev_short"] < -0.002))
         else:
             ml_exit_long = False
             ml_exit_short = False
