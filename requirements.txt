@@ -1,3 +1,19 @@
-# Freqtrade — pinned to stable release.
+# ClaudeTrade — Python dependencies
 # Install: uv pip install -r requirements.txt
+#
+# Core
 freqtrade>=2024.12
+
+# FreqAI ML stack (auto-installed by freqtrade[freqai], listed for clarity)
+lightgbm>=4.0
+xgboost>=2.0
+scikit-learn>=1.3
+datasieve>=0.1.9
+
+# Indicator library (auto-installed by freqtrade, listed for clarity)
+technical>=1.4
+
+# NOTE: TA-Lib binary is required and installed by freqtrade.
+# If TA-Lib fails to install, install the system library first:
+#   sudo apt install libta-lib0 libta-lib-dev
+# Or on Arch: sudo pacman -S ta-lib

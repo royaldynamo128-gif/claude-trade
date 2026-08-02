@@ -11,7 +11,6 @@
   "cancel_open_orders_on_exit": true,
   "trading_mode": "futures",
   "margin_mode": "isolated",
-  "data_format_ohlcv": "feather",
   "liquidation_buffer": 0.10,
   "stoploss_on_exchange": true,
   "stoploss_price_type": "mark",
@@ -34,60 +33,50 @@
   },
   "exchange": {
     "name": "binance",
+    "key": "",
+    "secret": "",
+    "ccxt_config": {
+      "options": {
+        "defaultType": "swap"
+      }
+    },
+    "ccxt_async_config": {},
     "pair_whitelist": [
       "BTC/USDT:USDT",
       "ETH/USDT:USDT",
-      "SOL/USDT:USDT",
-      "BNB/USDT:USDT",
       "XRP/USDT:USDT",
-      "AVAX/USDT:USDT",
-      "DOGE/USDT:USDT",
-      "LINK/USDT:USDT"
+      "ADA/USDT:USDT",
+      "LINK/USDT:USDT",
+      "TRX/USDT:USDT",
+      "LTC/USDT:USDT",
+      "ETC/USDT:USDT",
+      "BCH/USDT:USDT",
+      "XLM/USDT:USDT"
     ],
     "pair_blacklist": []
   },
-  "leverage": 5.0,
-  "pairlists": [
-    {
-      "method": "StaticPairList"
-    }
-  ],
-  "telegram": {
-    "enabled": false,
-    "token": "disabled",
-    "chat_id": "disabled"
-  },
-  "api_server": {
-    "enabled": false,
-    "listen_ip_address": "127.0.0.1",
-    "listen_port": 8080,
-    "username": "disabled",
-    "password": "disabled_password",
-    "jwt_secret_key": "disabled_jwt_secret_key_1234567890123"
-  },
   "freqai": {
     "enabled": true,
-    "purge_old_models": true,
-    "train_period_days": 10,
-    "backtest_period_days": 5,
-    "live_retrain_hours": 0,
+    "purge_old_models": 2,
+    "train_period_days": 30,
+    "backtest_period_days": 7,
+    "live_retrain_hours": 1,
     "expiration_hours": 24,
-    "identifier": "ct-futures-lgbm-v2",
+    "identifier": "ct-futures-lgbm-v3",
+    "fit_live_predictions_candles": 300,
     "feature_parameters": {
       "include_timeframes": ["5m", "1h"],
-      "include_corr_pairlist": ["BTC/USDT:USDT", "ETH/USDT:USDT"],
+      "include_corr_pairlist": ["BTC/USDT:USDT"],
       "label_period_candles": 24,
-      "indicator_periods_candles": [10, 20],
       "include_shifted_candles": 2,
-      "indicator_max_period_candles": 100,
+      "indicator_periods_candles": [10, 20],
+      "indicator_max_period_candles": 200,
       "weight_factor": 0.9,
       "principal_component_analysis": false,
       "use_svm_to_remove_outliers": false,
       "DI_threshold": 1.0,
+      "noise_standard_deviation": 0.05,
       "drop_outer_outliers": false
-    },
-    "data_kitchen": {
-      "label_period_candles": 24
     },
     "data_split_parameters": {
       "test_size": 0.25,
@@ -96,16 +85,33 @@
     },
     "model_training_parameters": {
       "n_estimators": 300,
-      "learning_rate": 0.03,
-      "max_depth": 6,
+      "learning_rate": 0.05,
       "num_leaves": 31,
-      "subsample": 0.8,
-      "colsample_bytree": 0.8,
-      "min_child_samples": 20,
+      "min_data_in_leaf": 50,
+      "feature_fraction": 0.8,
+      "bagging_fraction": 0.8,
+      "bagging_freq": 5,
+      "early_stopping_rounds": 50,
       "random_state": 42
     }
   },
-  "bot_name": "ClaudeTrade-Backtest",
+  "leverage": 5.0,
+  "pairlists": [
+    {
+      "method": "StaticPairList"
+    }
+  ],
+  "api_server": {
+    "enabled": false,
+    "listen_ip_address": "127.0.0.1",
+    "listen_port": 8088,
+    "username": "freqtrade",
+    "password": "freqtrade123",
+    "verbosity": "error",
+    "enable_openapi": false,
+    "CORS_origins": [],
+    "jwt_secret_key": "somethingRandomSomethingRandom123"
+  },
   "initial_state": "running",
   "force_entry_enable": false,
   "internals": {

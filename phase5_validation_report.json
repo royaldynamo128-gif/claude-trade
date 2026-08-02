@@ -1,0 +1,110 @@
+{
+  "timestamp": "2026-08-02T13:51:43.589332+00:00",
+  "total_trades": 11,
+  "summary": {
+    "pass": 0,
+    "warn": 1,
+    "fail": 7,
+    "overall": "FAIL"
+  },
+  "kpi_results": {
+    "L7-K1": {
+      "value": 0.3181818181818182,
+      "status": "\u274c FAIL",
+      "reason": "ECE 0.3182 >= 0.10"
+    },
+    "L7-K2": {
+      "value": 0.25,
+      "status": "\u274c FAIL",
+      "reason": "Brier 0.2500 >= 0.25"
+    },
+    "L7-K6": {
+      "value": 0.0,
+      "status": "\u274c FAIL",
+      "reason": "std-dev 0.0000 < 0.05 (CLUSTERING COLLAPSE)"
+    },
+    "L7-K7": {
+      "value": 0.5,
+      "status": "\u274c FAIL",
+      "reason": "p90 0.5000 < 0.55"
+    },
+    "L7-K8": {
+      "value": 0.5,
+      "status": "\u26a0\ufe0f WARN",
+      "reason": "p10 0.5000 > 0.40 (target)"
+    },
+    "L7-K9": {
+      "value": NaN,
+      "status": "\u274c FAIL",
+      "reason": "corr nan < 0.10 (EV is noise)"
+    },
+    "L7-K10": {
+      "value": NaN,
+      "status": "\u274c FAIL",
+      "reason": "corr nan < 0.10 (EV is noise)"
+    },
+    "L7-K14": {
+      "value": 0,
+      "status": "\u274c FAIL",
+      "reason": "Q4-Q1 win rate delta +0.0000 <= 0 (confidence is UNINFORMATIVE)"
+    }
+  },
+  "confidence_distribution": {
+    "mean": 0.5,
+    "std": 0.0,
+    "p10": 0.5,
+    "p90": 0.5,
+    "iqr": 0.0
+  },
+  "reliability_diagram": {
+    "predicted": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.5,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "actual": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.18181818181818182,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "sizes": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      11,
+      0,
+      0,
+      0,
+      0
+    ],
+    "ece": 0.3181818181818182,
+    "brier": 0.25,
+    "max_deviation": 0.3181818181818182
+  },
+  "quartile_analysis": {
+    "Q1_wr": 0,
+    "Q4_wr": 0,
+    "Q1_pf": 0,
+    "Q4_pf": 0,
+    "delta_wr": 0,
+    "delta_pf": 0
+  },
+  "ev_pnl_correlation": NaN,
+  "confidence_winrate_correlation": NaN
+}

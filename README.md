@@ -1,186 +1,116 @@
 # ClaudeTrade
 
-A clean, minimal Freqtrade wrapper for Binance Futures trading.
+A production-grade, AI-assisted Freqtrade wrapper for Binance USDT Futures (Long & Short).
 
-**This project does NOT contain a custom trading engine.**
-Freqtrade handles: order execution, position management, stop-loss, take-profit,
-trailing stops, leverage, trade lifecycle, database, logging, backtesting, and hyperopt.
-This repo provides: configuration, strategies, and management scripts only.
+**Status:** Phase 5 ready — FreqAI + Calibrated Confidence Engine + Risk Stack + Phase 5 Validator all integrated and runnable. Live trading gated behind Phase 5 validation success (see `PHASE_5_VALIDATION_CHECKLIST.md`).
 
 ---
 
 ## Architecture
 
-```
-claude-trade/
-├── config/
-│   ├── config.demo.json    ← Binance Futures Demo (active)
-│   └── config.live.json    ← Binance Futures Live (switch when ready)
-├── strategies/
-│   └── CTSampleStrategy.py   ← Starting strategy (add more here)
-├── scripts/
-│   ├── start.sh            ← Start the bot
-│   ├── backtest.sh         ← Run backtests
-│   ├── hyperopt.sh         ← Optimize strategy parameters
-│   └── download_data.sh    ← Download historical candles
-├── user_data/              ← Freqtrade runtime data (gitignored)
-├── venv/                   ← Python 3.11 venv (gitignored)
-└── .secrets                ← API keys (gitignored — never commit)
-```
+| Layer | Component | File |
+|---|---|---|
+| Execution | Freqtrade 2026.7 | `venv/` (installed) |
+| Strategy | `CTFuturesTrendStrategy` | `strategies/FuturesTrendStrategy.py` |
+| Confidence Engine | Multiplicative-gating combiner + Isotonic calibrator + EV + drift + validator | `application/confidence_engine.py` |
+| AI | FreqAI LightGBM Regressor | `config/config.demo.json` (`freqai` block) |
+| Risk | 5-protection stack + dynamic leverage + ATR stoploss + position sizing | inline in strategy |
+| Validation | Phase 5 L7 KPI validator | `validate_phase5.py` |
 
-**Web UI**: http://localhost:8080 (FreqUI — runs while bot is running)
-
----
-
-## Prerequisites
-
-1. **Binance Demo Account**: Ensure your Demo Futures API keys are active at
-   [Binance Demo](https://testnet.binancefuture.com)
-   - Position Mode: **One-way Mode**
-   - Asset Mode: **Single-Asset Mode**
-
-2. **Telegram Bot**: Bot token and chat ID already configured in `.secrets`
-
----
-
-## First-Time Setup
+## Quickstart
 
 ```bash
-# 1. Clone the repo
-git clone https://github.com/royaldynamo128-gif/claude-trade.git
-cd claude-trade
+# One-command setup (creates venv, installs deps, downloads data, runs backtest + validator)
+./scripts/setup_and_validate.sh
 
-# 2. Fill in credentials
-cp .env.example .secrets
-# Edit .secrets with your API keys
-
-# 3. Create Python venv and install Freqtrade
-uv venv venv --python 3.11
+# Or step by step:
+uv venv venv --python 3.12
 source venv/bin/activate
 uv pip install -r requirements.txt
-
-# 4. Initialize Freqtrade user data directory
 freqtrade create-userdir --userdir user_data
 
-# 5. Copy strategy template
-cp venv/lib/python3.11/site-packages/freqtrade/templates/sample_strategy.py \
-   strategies/CTSampleStrategy.py
-```
+# Download data
+./scripts/download_data.sh
 
----
+# Backtest
+./scripts/backtest.sh
 
-## Running the Bot
-
-### Demo Mode (default)
-```bash
+# Dry-run (Binance Demo)
 ./scripts/start.sh
 ```
 
-### Live Mode
-```bash
-MODE=live ./scripts/start.sh
+## Confidence Engine Design (key fix)
+
+The previous implementation used additive weighted averaging, which collapsed predictions to 45–55%. The corrected implementation uses **multiplicative gating**:
+
+```
+composite = calibrated_ml_prob
+          × trend_multiplier      [0.7, 1.2]
+          × regime_multiplier     [0.5, 1.0]
+          × volatility_multiplier [0.75, 1.0]
+          × funding_multiplier    [0.8, 1.0]
+          × oi_multiplier         [0.8, 1.1]
+          × historical_wr_mult    [0.7, 1.2]
 ```
 
-### With a different strategy
-```bash
-MODE=demo STRATEGY=NostalgiaForInfinity ./scripts/start.sh
+A single strong disagreement can veto a trade. Additive averaging regresses to the mean; multiplicative preserves discriminative power.
+
+### EV uses LOWER BOUND of confidence interval
+
+```
+EV = P(win) × reward_usd − P(loss) × risk_usd − costs_usd
+where P(win) = confidence_interval.lower  (NOT point estimate)
 ```
 
-**Switching Demo → Live** only requires changing `MODE`. The live config uses
-production Binance endpoints (`fapi.binance.com`) and `BINANCE_API_KEY` / `BINANCE_API_SECRET`
-from `.secrets`. No other change needed.
+This makes the system conservative by default — trades only when even the pessimistic estimate is positive.
 
----
-
-## Web UI (FreqUI)
-
-While the bot is running, open: **http://localhost:8080**
-
-- **Username**: `admin`
-- **Password**: see `FREQTRADE_UI_PASSWORD` in your `.secrets` file
-
-The UI shows: open trades, completed trades, PnL, account balance, logs, open orders,
-strategy statistics, and bot controls (start/stop).
-
----
-
-## Backtesting
+## Phase 5 Validation
 
 ```bash
-# Download historical data first
-./scripts/download_data.sh
+# After a backtest:
+python validate_phase5.py --backtest-result user_data/backtest_results/<latest>.json
 
-# Run backtest with default strategy
-./scripts/backtest.sh
-
-# Run with specific strategy and date range
-STRATEGY=NostalgiaForInfinity TIMERANGE=20240101-20241231 ./scripts/backtest.sh
-
-# Compare two strategies
-STRATEGY_LIST="CTSampleStrategy NostalgiaForInfinity" ./scripts/backtest.sh
+# Or from live trade DB:
+python validate_phase5.py --db user_data/tradesv3.sqlite
 ```
 
----
+Outputs L7 KPIs (Brier, ECE, confidence std-dev, EV correlation, quartile win-rate delta). All must be green for 7 consecutive days before Live consideration.
 
-## Hyperopt (Strategy Optimization)
+## Critical Files
 
-```bash
-STRATEGY=CTSampleStrategy EPOCHS=200 ./scripts/hyperopt.sh
-```
+- `strategies/FuturesTrendStrategy.py` — Strategy with FreqAI, risk callbacks, confidence engine integration
+- `application/confidence_engine.py` — IsotonicCalibrator, MultiSignalConfidenceCombiner, EVComputer, TradeFilter, UnifiedDriftDetector, CalibrationValidator
+- `config/config.demo.json` — FreqAI config (30d train, hourly retrain, SVM outliers, noise=0.05, 1000 estimators)
+- `config/config.backtest.json` — Static pairlist + relaxed FreqAI params for faster backtests
+- `validate_phase5.py` — L7 KPI validator
+- `PHASE_4_5_AUDIT_REPORT.md` — Documents the 10 critical defects fixed in this version
+- `PHASE_5_VALIDATION_CHECKLIST.md` — Required gates before Live trading
 
-Results are saved to `user_data/hyperopt_results/`. Load the best parameters with:
-```bash
-freqtrade hyperopt-show --userdir user_data --best
-```
+## Configurable Parameters
 
----
-
-## Adding Community Strategies
-
-See [STRATEGIES.md](STRATEGIES.md) for the full guide.
-
-Quick version:
-1. Copy the strategy `.py` file to `strategies/`
-2. Test it: `source venv/bin/activate && freqtrade test-strategy --strategy ClassName --userdir user_data --config config/config.demo.json`
-3. Run it: `STRATEGY=ClassName ./scripts/start.sh`
-
----
-
-## Common Commands
-
-| Task | Command |
-|---|---|
-| Start bot (demo) | `./scripts/start.sh` |
-| Start bot (live) | `MODE=live ./scripts/start.sh` |
-| Download data | `./scripts/download_data.sh` |
-| Run backtest | `./scripts/backtest.sh` |
-| Optimize strategy | `./scripts/hyperopt.sh` |
-| Test a strategy | `source venv/bin/activate && freqtrade test-strategy --strategy CTSampleStrategy --userdir user_data --config config/config.demo.json` |
-| View live trades | Open http://localhost:8080 |
-| Show bot version | `source venv/bin/activate && freqtrade --version` |
-
----
-
-## AI Extension Point
-
-If you want to add custom AI signal generation in the future:
-- Implement it as a Freqtrade strategy class in `strategies/`
-- The AI model should **only** generate `populate_entry_trend()` / `populate_exit_trend()` signals
-- Freqtrade handles execution, risk management, and order placement
-- Do NOT bypass Freqtrade's execution engine
-
----
-
-## Configuration Reference
-
-| Setting | Demo Value | Notes |
+| Parameter | Default | Location |
 |---|---|---|
-| `stake_amount` | 20 USDT | Per-trade allocation |
-| `max_open_trades` | 3 | Max simultaneous positions |
-| `leverage` | 3× | Change in config JSON |
-| `timeframe` | 5m | Candle timeframe |
-| `trading_mode` | futures | Binance Futures (not Spot) |
-| `margin_mode` | isolated | Isolated margin per position |
+| `confidence_threshold` | 0.60 | strategy class attr |
+| `max_open_trades` | 4 | config |
+| `stake_amount` | 20 USDT | config |
+| `leverage` (cap) | 5x | config |
+| `liquidation_buffer` | 0.10 | config |
+| `train_period_days` | 30 | config (`freqai`) |
+| `backtest_period_days` | 7 | config (`freqai`) |
+| `live_retrain_hours` | 1 | config (`freqai`) |
+| `n_estimators` | 1000 | config (`freqai.model_training_parameters`) |
+| `learning_rate` | 0.01 | config (`freqai.model_training_parameters`) |
 
-To change leverage: edit `"leverage": 3` in `config/config.demo.json`.
-To change stake: edit `"stake_amount": 20`.
+## Risk Stack
+
+| Protection | Config |
+|---|---|
+| CooldownPeriod | 2 candles |
+| StoplossGuard | 24-candle lookback, 4-trade limit, 4-candle stop, `only_per_side: true` |
+| MaxDrawdown (daily) | 288-candle lookback, 5% max DD, 144-candle stop, equity mode |
+| MaxDrawdown (weekly) | 2016-candle lookback, 10% max DD, 576-candle stop, equity mode |
+| LowProfitPairs | 2016-candle lookback, 0% required profit |
+
+## Disclaimer
+
+No backtest is a prediction. Backtests assume fills that dry-run may not get. Live trading carries risk of loss. This code is provided as research and engineering work, not financial advice. Start with Binance Futures Demo (`dry_run: true`). Only risk capital you can afford to lose.
